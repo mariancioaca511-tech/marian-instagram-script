@@ -3,45 +3,59 @@ const fs = require('fs');
 const { IgApiClient, RealtimeClient } = require('nodejs-insta-private-api');
 
 // =======================
-// PASSWORD INVISIBLE FUNCTION
+// PASSWORD INVISIBLE FUNCTION (STABLE SERVER/TERMINAL)
 // =======================
-function questionInvisible(query) {
-  return new Promise(resolve => {
+async function questionInvisible(query) {
+  if (process.stdin.isTTY) {
+    return new Promise(resolve => {
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+        terminal: true
+      });
+
+      process.stdout.write(query);
+
+      let password = "";
+
+      const onDataHandler = char => {
+        char = char + "";
+
+        // ENTER
+        if (char === "\r" || char === "\n") {
+          process.stdout.write("\n");
+          process.stdin.removeListener("data", onDataHandler);
+          rl.close();
+          process.stdin.setRawMode?.(false);
+          return resolve(password);
+        }
+
+        // BACKSPACE
+        if (char === "\u0008" || char === "\u007F") {
+          if (password.length > 0) {
+            password = password.slice(0, -1);
+          }
+          return;
+        }
+
+        // NORMAL CHAR
+        password += char;
+      };
+
+      process.stdin.setRawMode(true);
+      process.stdin.on("data", onDataHandler);
+    });
+  } else {
+    // fallback pentru servere fără TTY
     const rl = readline.createInterface({
       input: process.stdin,
-      output: process.stdout,
-      terminal: true
+      output: process.stdout
     });
-
-    process.stdout.write(query);
-
-    let password = "";
-
-    const onDataHandler = char => {
-      char = char + "";
-
-      // ENTER
-      if (char === "\r" || char === "\n") {
-        process.stdout.write("\n");
-        process.stdin.removeListener("data", onDataHandler);
-        rl.close();
-        return resolve(password);
-      }
-
-      // BACKSPACE
-      if (char === "\u0008" || char === "\u007F") {
-        if (password.length > 0) {
-          password = password.slice(0, -1);
-        }
-        return;
-      }
-
-      // NORMAL CHAR
-      password += char;
-    };
-
-    process.stdin.on("data", onDataHandler);
-  });
+    return new Promise(resolve => rl.question(query, answer => {
+      rl.close();
+      resolve(answer);
+    }));
+  }
 }
 
 // ORIGINAL question()
