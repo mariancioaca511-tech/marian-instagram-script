@@ -1,186 +1,185 @@
-// ==========================================================
-// 🔴 GYOVANNY WHATSAPP SCRIPT (INSTAGRAM MQTT SPAM BOT)
-// ==========================================================
-
-const fs = require("fs");
-const chalk = require("chalk");
-const readline = require("readline");
-const readlineSync = require("readline-sync");
-
-const { IgApiClient, RealtimeClient } = require("nodejs-insta-private-api");
-
-// ---------- PASSWORD INPUT INVISIBLE ----------
-function questionHidden(query) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-    });
-
-    process.stdout.write(query);
-
-    let password = "";
-    process.stdin.on("data", (char) => {
-      char = char + "";
-      switch (char) {
-        case "\n":
-        case "\r":
-        case "\u0004":
-          process.stdout.write("\n");
-          process.stdin.removeAllListeners("data");
-          rl.close();
-          resolve(password);
-          break;
-        default:
-          process.stdout.write("*");
-          password += char;
-          break;
-      }
-    });
-  });
-}
-
-// ---------- BANNER ----------
-console.log(
-  chalk.red(`
-██████  ██    ██  ██████  ██    ██  █████  ███    ██ ███    ██ ██    ██
-██   ██  ██  ██  ██    ██ ██    ██ ██   ██ ████   ██ ████   ██ ██    ██
-██████    ████   ██    ██ ██    ██ ███████ ██ ██  ██ ██ ██  ██ ██    ██
-██   ██    ██    ██    ██  ██  ██  ██   ██ ██  ██ ██ ██  ██ ██ ██    ██
-██   ██    ██     ██████    ████   ██   ██ ██   ████ ██   ████  ██████
-              🔴 GYOVANNY INSTAGRAM MQTT BOT 🔴
-`)
-);
+#!/usr/bin/env node
+const readlineSync = require('readline-sync');
+const fs = require('fs');
+const path = require('path');
+const chalk = require('chalk');
+const { IgApiClient, RealtimeClient } = require('nodejs-insta-private-api');
 
 (async () => {
+  console.clear();
+  console.log(chalk.red(`
+╔═════════════════════════════════════════════╗
+║       Gyovanny Instagram Spam Script        ║
+╚═════════════════════════════════════════════╝
+  `));
+
+  const ig = new IgApiClient();
+  let sessionExists = fs.existsSync('session.json');
+  let useSession = false;
+
+  if (sessionExists) {
+    const ans = readlineSync.question('📂 Found saved session. Use it? (y/n): ');
+    useSession = ans.toLowerCase() === 'y';
+  }
+
+  if (useSession) {
+    const sessionData = JSON.parse(fs.readFileSync('session.json', 'utf8'));
+    await ig.state.deserialize(sessionData);
+    console.log(chalk.green('✅ Session loaded!\n'));
+  } else {
+    const username = readlineSync.question('📧 Enter Instagram username: ');
+    const password = readlineSync.question('🔑 Enter Instagram password: ', { hideEchoBack: true });
+    
+    console.log(chalk.yellow('\n⏳ Logging in...'));
+    try {
+      await ig.login({ username, password });
+    } catch (err) {
+      console.log(chalk.red('❌ Login failed:'), err.message);
+      process.exit(1);
+    }
+    fs.writeFileSync('session.json', JSON.stringify(ig.state.serialize(), null, 2));
+    console.log(chalk.green('✅ Logged in! Session saved.\n'));
+  }
+
+  // Fetch inbox
+  console.log(chalk.yellow('📋 Fetching inbox...'));
+  let inbox;
   try {
-    // ---------- LOGIN ----------
-    const ig = new IgApiClient();
-    const realtime = new RealtimeClient(ig);
+    inbox = await ig.direct.getInbox();
+    console.log(chalk.green(`✅ Found ${inbox.inbox.threads.length} threads\n`));
+  } catch (err) {
+    console.log(chalk.red('❌ Failed to fetch inbox:'), err.message);
+    process.exit(1);
+  }
 
-    const username = readlineSync.question("Enter your Instagram username: ");
-    const password = await questionHidden("Enter your Instagram password: ");
+  // List threads
+  inbox.inbox.threads.forEach((thread, idx) => {
+    console.log(` ${idx + 1}. ${thread.thread_title || 'Group ' + (idx + 1)}`);
+  });
 
-    ig.state.generateDevice(username);
+  const threadInput = readlineSync.question('\n📍 Select threads to message (comma-separated numbers): ');
+  const selectedThreads = threadInput
+    .split(',')
+    .map(x => parseInt(x.trim()) - 1)
+    .map(i => inbox.inbox.threads[i])
+    .filter(t => t);
 
-    console.log(chalk.yellow("🔐 Logging in..."));
-    await ig.login({ username, password });
+  if (!selectedThreads.length) {
+    console.log(chalk.red('❌ No threads selected.'));
+    process.exit(0);
+  }
 
-    console.log(chalk.green("✅ Logged in successfully!"));
+  // Load message file
+  const filePath = readlineSync.question('\n📄 Enter path to text file: ');
+  if (!fs.existsSync(filePath)) {
+    console.log(chalk.red('❌ File does not exist.'));
+    process.exit(0);
+  }
+  const messageText = fs.readFileSync(filePath, 'utf8').trim();
+  const mode = readlineSync.questionInt('\n📮 Mode: 1=Line by line, 2=Entire text: ');
 
-    // ---------- FETCH INBOX (REST API) ----------
-    console.log(chalk.yellow("📥 Fetching inbox threads..."));
-    const inbox = await ig.direct.getInbox();
-    const threads = inbox.inbox.threads;
+  const delaySeconds = readlineSync.questionInt('⏱️ Enter delay between messages (seconds): ');
+  if (isNaN(delaySeconds) || delaySeconds < 0) {
+    console.log(chalk.red('❌ Invalid delay.'));
+    process.exit(0);
+  }
 
-    if (!threads.length) {
-      console.log(chalk.red("❌ No threads found on this account."));
-      process.exit(0);
+  // Connect Realtime MQTT
+  const realtime = new RealtimeClient(ig);
+  let connected = false;
+
+  const connectRealtime = async () => {
+    try {
+      await realtime.connect({
+        graphQlSubs: ['ig_sub_direct', 'ig_sub_direct_v2_message_sync'],
+        skywalkerSubs: ['presence_subscribe', 'typing_subscribe'],
+        irisData: inbox
+      });
+      connected = true;
+      console.log(chalk.green('\n✅ Connected to MQTT realtime!\n'));
+    } catch (err) {
+      connected = false;
+      console.log(chalk.red('❌ MQTT connection failed. Retrying in 5s...'));
+      setTimeout(connectRealtime, 5000);
     }
+  };
 
-    console.log(chalk.cyan("\n📌 Available Instagram groups / threads:\n"));
+  realtime.on('disconnected', () => {
+    connected = false;
+    console.log(chalk.yellow('⚠️  Disconnected. Reconnecting...'));
+    connectRealtime();
+  });
 
-    threads.forEach((t, i) => {
-      const name =
-        t.thread_title ||
-        (t.users.length === 1 ? t.users[0].username : "Group Chat");
-      console.log(chalk.white(`${i + 1}. ${name}   (Thread ID: ${t.thread_id})`));
-    });
+  realtime.on('error', (err) => {
+    console.log(chalk.red('❌ MQTT error:'), err.message);
+  });
 
-    console.log("");
+  // Listen for all incoming messages
+  realtime.on('message', (data) => {
+    const msg = data.message;
+    if (!msg?.text) return;
 
-    // ---------- SELECT THREADS ----------
-    const selected = readlineSync
-      .question("Select groups (ex: 1,2,5): ")
-      .split(",")
-      .map((x) => parseInt(x.trim()) - 1)
-      .filter((x) => x >= 0 && x < threads.length);
+    console.log(chalk.blue('\n───────────────────────────────'));
+    console.log(`📨 MESSAGE from ${msg.from_user_id} (Thread ${msg.thread_id}):`);
+    console.log(msg.text);
+    console.log(chalk.blue('───────────────────────────────\n'));
+  });
 
-    if (!selected.length) {
-      console.log(chalk.red("❌ No threads selected."));
-      process.exit(0);
-    }
+  await connectRealtime();
 
-    const targetThreads = selected.map((i) => threads[i].thread_id);
+  // Sending messages infinite loop
+  console.log(chalk.green('🚀 Starting message loop. Press Ctrl+C to stop.\n'));
+  let round = 0;
+  let totalSent = 0;
 
-    // ---------- TEXT PATH ----------
-    const textPath = readlineSync.question("\nEnter your text file path: ");
-
-    if (!fs.existsSync(textPath)) {
-      console.log(chalk.red("❌ File does not exist."));
-      process.exit(0);
-    }
-
-    const messages = fs
-      .readFileSync(textPath, "utf8")
-      .split("\n")
-      .map((x) => x.trim())
-      .filter((x) => x.length > 0);
-
-    if (!messages.length) {
-      console.log(chalk.red("❌ Text file is empty."));
-      process.exit(0);
-    }
-
-    // ---------- DELAY ----------
-    const delaySeconds = parseInt(
-      readlineSync.question("Enter delay between messages (seconds): ")
-    );
-
-    if (isNaN(delaySeconds) || delaySeconds < 1) {
-      console.log(chalk.red("❌ Invalid delay."));
-      process.exit(0);
-    }
-
-    // ---------- REALTIME CONNECT ----------
-    console.log(chalk.yellow("🔌 Connecting to Instagram MQTT..."));
-
-    await realtime.connect({
-      graphQlSubs: ["ig_sub_direct", "ig_sub_direct_v2_message_sync"],
-      skywalkerSubs: ["presence_subscribe", "typing_subscribe"],
-      irisData: inbox,
-    });
-
-    console.log(chalk.green("✅ Connected to MQTT realtime!"));
-
-    // ---------- LISTEN TO ALL INCOMING MESSAGES ----------
-    realtime.on("message", (data) => {
-      if (data?.message?.text) {
-        console.log(
-          chalk.magenta(
-            `\n📨 New message from ${data.message.from_user_id}: ${data.message.text}`
-          )
-        );
-      }
-    });
-
-    // ---------- SPAM LOOP ----------
-    console.log(chalk.green("\n🚀 Starting realtime MQTT message loop...\n"));
-
+  if (mode === 1) {
+    const lines = messageText.split('\n').filter(l => l.trim().length > 0);
     while (true) {
-      for (const line of messages) {
-        for (const threadId of targetThreads) {
-          try {
-            await realtime.directCommands.sendTextViaRealtime(
-              threadId,
-              line
-            );
+      round++;
+      console.log(chalk.yellow(`\n🔄 ROUND #${round}`));
 
-            console.log(
-              chalk.green(
-                `📤 Sent to ${threadId}: "${line}" (via MQTT realtime)`
-              )
-            );
-          } catch (err) {
-            console.log(chalk.red(`❌ Error sending: ${err.message}`));
+      for (const line of lines) {
+        for (const thread of selectedThreads) {
+          if (!connected) {
+            console.log(chalk.red('⚠️  Not connected. Waiting to reconnect...'));
+            while (!connected) await new Promise(r => setTimeout(r, 1000));
           }
+          try {
+            await realtime.directCommands.sendTextViaRealtime(thread.thread_id, line);
+            totalSent++;
+            console.log(chalk.green(`✅ Sent to ${thread.thread_title || thread.thread_id}`));
+          } catch (err) {
+            console.log(chalk.red(`❌ Failed: ${err.message}`));
+          }
+
+          if (delaySeconds > 0) await new Promise(r => setTimeout(r, delaySeconds * 1000));
+        }
+      }
+      console.log(chalk.cyan(`📊 Total messages sent: ${totalSent}`));
+    }
+  } else {
+    while (true) {
+      round++;
+      console.log(chalk.yellow(`\n🔄 ROUND #${round}`));
+
+      for (const thread of selectedThreads) {
+        if (!connected) {
+          console.log(chalk.red('⚠️  Not connected. Waiting to reconnect...'));
+          while (!connected) await new Promise(r => setTimeout(r, 1000));
         }
 
-        await new Promise((r) => setTimeout(r, delaySeconds * 1000));
+        try {
+          await realtime.directCommands.sendTextViaRealtime(thread.thread_id, messageText);
+          totalSent++;
+          console.log(chalk.green(`✅ Sent to ${thread.thread_title || thread.thread_id}`));
+        } catch (err) {
+          console.log(chalk.red(`❌ Failed: ${err.message}`));
+        }
+
+        if (delaySeconds > 0) await new Promise(r => setTimeout(r, delaySeconds * 1000));
       }
+      console.log(chalk.cyan(`📊 Total messages sent: ${totalSent}`));
     }
-  } catch (err) {
-    console.log(chalk.red(`❌ ERROR: ${err.message}`));
   }
+
 })();
