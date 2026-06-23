@@ -14,35 +14,77 @@ const question = (query) => new Promise(resolve => rl.question(query, resolve));
 
 (async () => {
   try {
-    console.clear();
-    console.log(chalk.red.bold('\n╔═══════════════════════════════════════════════════════════╗'));
+ console.log(chalk.red.bold('\n╔═══════════════════════════════════════════════════════════╗'));
     console.log(chalk.red.bold('║                                                           ║'));
-    console.log(chalk.red.bold('║            🤖 Gyovanny WhatsApp Script 🤖                ║'));
+    console.log(chalk.red.bold('║               🤖 Marian x Bogdan spammer 🤖              ║'));
     console.log(chalk.red.bold('║                                                           ║'));
     console.log(chalk.red.bold('║         Instagram Bulk DM Sender - MQTT v5.57.9          ║'));
     console.log(chalk.red.bold('║              Infinite Loop Mode - Continuous             ║'));
     console.log(chalk.red.bold('║                                                           ║'));
     console.log(chalk.red.bold('╚═══════════════════════════════════════════════════════════╝\n'));
 
-    console.log(chalk.cyan('🔐 Enter your Instagram credentials:\n'));
-    const username = await question(chalk.yellow('📧 Username: '));
-    const password = await question(chalk.yellow('🔑 Password: '));
-    const email = await question(chalk.yellow('📨 Email (press Enter to skip): '));
+  let ig = new IgApiClient();
+    let isLoggedIn = false;
 
-    console.log(chalk.cyan('\n⏳ Authenticating...'));
+    console.log(chalk.cyan('🔐 Instagram Authentication:\n'));
+    const username = await question(chalk.yellow('📧 Username: '));
     
-    let ig = new IgApiClient();
-    try {
-      await ig.login({
-        username: username,
-        password: password,
-        email: email || undefined
-      });
-    } catch (err) {
-      console.error(chalk.red('❌ Login failed:', err.message));
-      process.exit(1);
+    ig.state.generateDevice(username);
+
+    ig.request.end$.subscribe(async () => {
+      const serialized = await ig.state.serialize();
+      delete serialized.constants;
+      fs.writeFileSync('./session.json', JSON.stringify(serialized));
+    });
+
+    if (fs.existsSync('./session.json')) {
+      console.log(chalk.yellow('🔄 Se încarcă sesiunea existentă din fișier...'));
+      try {
+let ig = new IgApiClient();
+    let isLoggedIn = false;
+
+    console.log(chalk.cyan('🔐 Instagram Authentication:\n'));
+    const username = await question(chalk.yellow('📧 Username: '));
+    
+    ig.state.generateDevice(username);
+
+    ig.request.end$.subscribe(async () => {
+      const serialized = await ig.state.serialize();
+      delete serialized.constants;
+      fs.writeFileSync('./session.json', JSON.stringify(serialized));
+    });
+
+    if (fs.existsSync('./session.json')) {
+      console.log(chalk.yellow('🔄 Se încarcă sesiunea existentă din fișier...'));
+      try {
+        const sessionData = JSON.parse(fs.readFileSync('./session.json', 'utf8'));
+        await ig.state.deserialize(sessionData);
+        await ig.account.currentUser();
+        console.log(chalk.green('✅ Logat cu succes prin sesiune salvată (fără parolă)!\n'));
+        isLoggedIn = true;
+      } catch (err) {
+        console.log(chalk.red('❌ Sesiunea a expirat sau este invalidă. Se trece la logarea cu parolă.'));
+      }
     }
 
+    if (!isLoggedIn) {
+      const password = await question(chalk.yellow('🔑 Password: '));
+      const email = await question(chalk.yellow('📨 Email (press Enter to skip): '));
+
+      console.log(chalk.cyan('\n⏳ Authenticating...'));
+      try {
+        await ig.account.login({
+          username: username,
+          password: password,
+          email: email || undefined
+        });
+        console.log(chalk.green('✅ Logged in cu succes! Sesiunea a fost salvată.\n'));
+      } catch (err) {
+        console.error(chalk.red('❌ Login failed:', err.message));
+        process.exit(1);
+      }
+    }
+      
     console.log(chalk.green('✅ Logged in!\n'));
 
     console.log(chalk.cyan('📋 Fetching inbox via MQTT...'));
