@@ -9,7 +9,7 @@ const { IgApiClient, RealtimeClient } = require('nodejs-insta-private-api');
   console.clear();
   console.log(chalk.red(`
 ╔═════════════════════════════════════════════╗
-║       Gyovanny Instagram Spam Script        ║
+║       Marian x Bogdan spammer instagram     ║
 ╚═════════════════════════════════════════════╝
   `));
 
